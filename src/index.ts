@@ -114,3 +114,61 @@ export class ScopedConsumer {
         consumer.dispose();
     }
 }
+
+export type ValueChanged<T> = (value: T) => void;
+export type VoidCallback = () => void;
+
+export abstract class Notifier<STATE> {
+    private _listeners: ValueChanged<STATE>[] = [];
+
+    private _internalState?: STATE;
+
+    get state(): STATE {
+        if (!this._didInitialize) {
+            this._internalState = this.build();
+            this._didInitialize = true;
+        }
+        return this._internalState!;
+    }
+
+    private _didInitialize = false;
+
+    build(): STATE {
+        return this._internalState!;
+    }
+
+    set state(state: STATE) {
+        const oldState = this._internalState;
+        this._internalState = state;
+        if (this.updateShouldNotifier(oldState, state)) {
+            this.notifiyListeners();
+        }
+    }
+
+    notifiyListeners(): void {
+        const state = this.state;
+        for (let index = 0; index < this._listeners.length; index++) {
+            const cb = this._listeners[index];
+            cb(state);
+        }
+    }
+
+    updateShouldNotifier(oldState: STATE | undefined | null, newState: STATE): boolean {
+        return oldState !== newState;
+    }
+
+    addListener(cb: ValueChanged<STATE>, fireImmediately = false): VoidCallback {
+        if (!this._listeners.includes(cb)) {
+            this._listeners.push(cb);
+        }
+        if (fireImmediately) {
+            cb(this.state);
+        }
+        return () => {
+            const i = this._listeners.indexOf(cb);
+            console.log(`index: ${i}`);
+            if (i < 0) return;
+            this._listeners.splice(i, 1);
+        };
+    }
+}
