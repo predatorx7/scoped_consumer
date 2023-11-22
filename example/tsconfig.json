@@ -18,7 +18,6 @@
     "target": "es5"
   },
   "include": [
-    "main.ts",
-    "test/**/*.ts"
+    "main.ts"
   ]
 }
