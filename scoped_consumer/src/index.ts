@@ -1,5 +1,9 @@
 export interface Ref {
     read<T>(provider: ProviderBase<T>): T;
+
+    listen<STATE>(provider: ProviderBase<Notifier<STATE>>, onChange: ListenerChangeCallback<STATE>, fireImmediately?: boolean): void;
+
+    onDispose(cb: VoidCallback): void;
 }
 
 export type ProviderCallback<T> = (ref: Ref) => T;
@@ -22,14 +26,30 @@ export class ScopedRef<O> implements Ref {
         return this.scoped.read(provider);
     };
 
-    onCreate(cb: () => void) { }
+    listen<STATE>(provider: ProviderBase<Notifier<STATE>>, onChange: ListenerChangeCallback<STATE>, fireImmediately?: boolean) {
+        return this.scoped.listen(provider, onChange, fireImmediately);
+    }
 
-    onDispose(cb: () => void) { }
+    onCreate(cb: VoidCallback) { }
+
+    onDispose(cb: VoidCallback) {
+        return this.scoped.onDispose(cb);
+    }
 }
 
 export type STATE_MAP = { [key: number]: any };
 export type CHILDREN = { [key: number]: ProviderBase<any>[] };
 export type STATE_RESULT = { index: number, state: STATE_MAP, children: ProviderBase<any>[] };
+
+export type ListenerChangeCallback<STATE> = (oldState: STATE | null, newState: STATE) => void;
+
+export class InvalidScopedConsumerUsage {
+    constructor(private readonly message: string) { }
+
+    toString() {
+        return `InvalidScopedConsumerUsage: ${this.message}`
+    }
+}
 
 export class ScopedConsumer {
     constructor(protected readonly parent?: ScopedConsumer) { }
@@ -37,8 +57,20 @@ export class ScopedConsumer {
     private providers: ProviderBase<any>[] = [];
     private state: STATE_MAP = {};
     private children: CHILDREN = {};
+    private disposeCallbacks: VoidCallback[] = [];
+
+    private _mounted = true;
+    public get mounted() {
+        return this._mounted;
+    }
+
+    private throwIfUnmounted() {
+        if (this.mounted) return;
+        throw new InvalidScopedConsumerUsage('A scoped consumer was used after it was disposed.');
+    }
 
     protected findProviderState<T>(provider: ProviderBase<T>): STATE_RESULT | null {
+        this.throwIfUnmounted();
         if (!this.providers.includes(provider)) {
             if (this.parent) {
                 return this.parent.findProviderState(provider);
@@ -58,6 +90,7 @@ export class ScopedConsumer {
     }
 
     protected createState<T>(provider: ProviderBase<T>): STATE_RESULT {
+        this.throwIfUnmounted();
         if (!this.providers.includes(provider)) {
             this.providers.push(provider);
         }
@@ -73,10 +106,12 @@ export class ScopedConsumer {
     }
 
     protected hasCreatedState(stateResult: STATE_RESULT): boolean {
+        this.throwIfUnmounted();
         return !!stateResult.state[stateResult.index];
     }
 
     protected getState<T>(provider: ProviderBase<T>): STATE_RESULT {
+        this.throwIfUnmounted();
         let stateResult = this.findProviderState(provider);
         if (!stateResult) {
             stateResult = this.createState(provider);
@@ -84,7 +119,13 @@ export class ScopedConsumer {
         return stateResult;
     }
 
+    onDispose(cb: VoidCallback) {
+        this.throwIfUnmounted();
+        this.disposeCallbacks.push(cb);
+    }
+
     read<T>(provider: ProviderBase<T>): T {
+        this.throwIfUnmounted();
         let stateResult = this.getState(provider);
 
         if (!this.hasCreatedState(stateResult)) {
@@ -93,7 +134,21 @@ export class ScopedConsumer {
         return stateResult.state[stateResult.index] as T;
     }
 
+    listen<STATE>(provider: ProviderBase<Notifier<STATE>>, onChange: ListenerChangeCallback<STATE>, fireImmediately?: boolean) {
+        this.throwIfUnmounted();
+        const notifier = this.read(provider);
+
+        let oldValue = notifier.state;
+        const listenerRemover = notifier.addListener((value) => {
+            onChange(oldValue, value)
+            oldValue = value;
+        }, fireImmediately);
+
+        this.onDispose(listenerRemover);
+    }
+
     invalidate<T>(provider: ProviderBase<T>): void {
+        this.throwIfUnmounted();
         let stateResult = this.getState(provider);
         if (this.hasCreatedState(stateResult)) {
             stateResult.state[stateResult.index] = null;
@@ -101,14 +156,31 @@ export class ScopedConsumer {
     }
 
     child() {
-        return new ScopedConsumer(this);
+        this.throwIfUnmounted();
+        const child = new ScopedConsumer(this);
+
+        this.onDispose(() => {
+            child.dispose();
+        });
+
+        return child;
+    }
+
+    __remount() {
+        this._mounted = true;
     }
 
     dispose() {
-        //
+        if (!this.mounted) return;
+        for (let index = 0; index < this.disposeCallbacks.length; index++) {
+            const cb = this.disposeCallbacks[index];
+            cb();
+        }
+        this._mounted = false;
     }
 
     async run(callback: (consumer: ScopedConsumer) => Promise<void>) {
+        if (!this.mounted) return;
         const consumer = this.child();
         await callback(consumer);
         consumer.dispose();
@@ -140,12 +212,12 @@ export abstract class Notifier<STATE> {
     set state(state: STATE) {
         const oldState = this._internalState;
         this._internalState = state;
-        if (this.updateShouldNotifier(oldState, state)) {
+        if (this.updateShouldNotify(oldState, state)) {
             this.notifiyListeners();
         }
     }
 
-    notifiyListeners(): void {
+    private notifiyListeners(): void {
         const state = this.state;
         for (let index = 0; index < this._listeners.length; index++) {
             const cb = this._listeners[index];
@@ -153,7 +225,7 @@ export abstract class Notifier<STATE> {
         }
     }
 
-    updateShouldNotifier(oldState: STATE | undefined | null, newState: STATE): boolean {
+    updateShouldNotify(oldState: STATE | undefined | null, newState: STATE): boolean {
         return oldState !== newState;
     }
 
@@ -164,9 +236,10 @@ export abstract class Notifier<STATE> {
         if (fireImmediately) {
             cb(this.state);
         }
+
+        // Returning listener remover
         return () => {
             const i = this._listeners.indexOf(cb);
-            console.log(`index: ${i}`);
             if (i < 0) return;
             this._listeners.splice(i, 1);
         };

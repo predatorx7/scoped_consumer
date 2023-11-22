@@ -1,5 +1,5 @@
 {
-  "name": "scoped_consumer",
+  "name": "scoped_consumer_example",
   "version": "0.1.0",
   "description": "A simple scoped dependencies consumer",
   "main": "index.js",
@@ -12,18 +12,20 @@
     "prepare": "yarn run compile",
     "pretest": "yarn run compile",
     "posttest": "yarn run lint",
-    "main": "ts-node src/main.ts"
+    "main": "ts-node main.ts"
   },
   "keywords": [
     "di"
   ],
   "author": "Mushaheed Syed <smushaheed@gmail.com>",
   "license": "UNLICENSED",
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.4.5",
     "gts": "^5.0.0",
     "ts-node": "^10.9.1",
     "typescript": "~5.1.6"
+  },
+  "dependencies": {
+    "scoped_consumer": "link:../scoped_consumer"
   }
 }
