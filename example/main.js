@@ -1,7 +1,7 @@
-import { Notifier, Provider, ScopedConsumer } from "scoped_consumer";
+const { Notifier, Provider, ScopedConsumer } = require("scoped_consumer");
 
-class Counter extends Notifier<number> {
-    build(): number {
+class Counter extends Notifier {
+    build() {
         return 0;
     }
 
